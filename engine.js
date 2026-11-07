@@ -84,6 +84,15 @@
     for (const r of def.walls || []) w.polys.push(makePoly(Array.isArray(r[0]) ? r : rectPoly(r[0], r[1], r[2], r[3])))
     for (const r of def.cracked || []) w.polys.push(makePoly(rectPoly(r[0], r[1], r[2], r[3]), 'cracked'))
     for (const r of def.spikes || []) w.polys.push(makePoly(rectPoly(r[0], r[1], r[2], r[3]), 'spikes'))
+    // バネ: [x, y, 幅, 傾き(度。正で右向きに飛ばす), 強さ]。上面の向きに、決まった速さで跳ね返す
+    for (const r of def.springs || []) {
+      const [x, y, sw, deg, pw] = r, a = (deg || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), hw = sw / 2, th = 10
+      const cx = x + hw, cy = y + th / 2 - Math.abs(Math.sin(a)) * hw   // 低い方の端が y に来る
+      const pts = [[-hw, -th / 2], [hw, -th / 2], [hw, th / 2], [-hw, th / 2]].map(([px, py]) => [cx + px * ca - py * sa, cy + px * sa + py * ca])
+      const P = makePoly(pts, 'spring'); P.power = pw || 700; P.ang = a; P.cx = cx; P.cy = cy; P.sw = sw; P.squash = 0; w.polys.push(P)
+    }
+    // 木の板: 岩が落ちると割れる（爆弾でも割れる）。宝箱や勇者は乗れる
+    for (const r of def.planks || []) w.polys.push(makePoly(Array.isArray(r[0]) ? r : rectPoly(r[0], r[1], r[2], r[3] || 10), 'plank'))
     // 勇者
     const h = w.hero, hd = def.hero
     if (hd.hang) {
@@ -241,6 +250,13 @@
         if (P.gone || !polyHit(P, b.x, b.y, b.r, tmp)) continue
         b.x += tmp.nx * tmp.d; b.y += tmp.ny * tmp.d
         const vn = vx * tmp.nx + vy * tmp.ny
+        if (P.kind === 'spring' && tmp.ny < -0.3 && !settle) {   // 上面に乗ったら、面の向きに跳ね上げる
+          const sn = Math.sin(P.ang), cs = Math.cos(P.ang), ux = sn, uy = -cs   // 面の外向き
+          const tv = vx * cs + vy * sn, out = P.power / 60
+          if (vn < 1) { vx = ux * out + cs * tv * 0.5; vy = uy * out + sn * tv * 0.5; P.squash = 1; w.events.push({ e: 'boing', kind: b.kind, x: b.x, y: b.y + b.r }) }
+          b.px = b.x - vx; b.py = b.y - vy
+          continue
+        }
         if (vn < 0) {
           const tx = vx - vn * tmp.nx, ty = vy - vn * tmp.ny, gr = tmp.ny < -0.5 ? b.grip : b.grip * 0.3
           vx = tx * (1 - gr) - b.e * vn * tmp.nx; vy = ty * (1 - gr) - b.e * vn * tmp.ny
@@ -279,17 +295,32 @@
       }
       if (!h.dead && b.alive && b.y > H + 40) killHero(w, 'fall')
     }
+    // 立っている足元が無くなったら（板が割れた）、また落ちる
+    if (h.standing && !h.dead && w.state === 'play' && (w.frame & 3) === 0) {
+      let under = false
+      for (const P of w.polys) if (!P.gone && P.kind !== 'hero' && polyHit(P, h.x, h.y + 4, 7, tmp)) { under = true; break }
+      if (!under) {
+        h.standing = false; w.heroPoly = null
+        const b = addBody(w, { id: 'hero', kind: 'hero', x: h.x, y: h.y - HERO_FEET }); h.body = b
+      }
+    }
     // 魔物（歩く）
     for (const m of w.walkers) {
       if (!m.alive) continue
       if (h.dead || w.state === 'clear') { m.moving = false; continue }
-      if (m.wait > 0) { m.wait -= DT; m.moving = false; continue }
-      const dir = Math.sign(h.x - m.x) || -1; m.face = dir
-      const nx = m.x + dir * m.speed * DT
-      let blocked = false
-      for (const P of w.polys) { if (P.gone || P.kind === 'floor' || P.kind === 'stone') continue; if (polyHit(P, nx, m.y - 15, 13, tmp) && tmp.nx * dir < -0.5) { blocked = true; break } }
-      m.moving = !blocked
-      if (!blocked) m.x = nx
+      // 足元が無ければ落ちる（棚の上で檻が壊れた時・棚の端から出た時）
+      { let sup = false; for (const P of w.polys) if (!P.gone && P.kind !== 'frame' && polyHit(P, m.x, m.y + 2, 3, tmp)) { sup = true; break }
+        if (!sup) { m.vy = (m.vy || 0) + G * DT; let dy = m.vy * DT; while (dy > 0) { const st = Math.min(2, dy); m.y += st; dy -= st; let hit = false; for (const P of w.polys) if (!P.gone && P.kind !== 'frame' && polyHit(P, m.x, m.y + 2, 3, tmp)) { hit = true; break } if (hit) { m.vy = 0; break } } if (m.y > H + 40) { m.alive = false } } else m.vy = 0 }
+      if (m.wait > 0 && h.standing && !h.dead && Math.abs(m.x - h.x) < 130 && Math.abs(m.y - h.y) < 40) m.wait = 0   // 勇者が近くに立つと起きる
+      if (m.wait > 0) { m.wait -= DT; m.moving = false }   // 寝ている（上から来た物には当たる）
+      else {
+        const dir = Math.sign(h.x - m.x) || -1; m.face = dir
+        const nx = m.x + dir * m.speed * DT
+        let blocked = false
+        for (const P of w.polys) { if (P.gone || P.kind === 'floor' || P.kind === 'stone' || P.kind === 'spring') continue; if (polyHit(P, nx, m.y - 15, 13, tmp) && tmp.nx * dir < -0.5) { blocked = true; break } }
+        m.moving = !blocked
+        if (!blocked) m.x = nx
+      }
       // 溶岩に入ったら燃える
       for (const L of w.lavas) if (!L.stone && m.x > L.x + 6 && m.x < L.x + L.w - 6 && m.y >= FLOOR - 2) { killWalker(w, m, 'burn'); break }
       // 上から落ちてきた物
@@ -345,6 +376,7 @@
     const h = w.hero
     if (b.kind === 'bucket' && b.full && P.kind === 'floor' && b.y > FLOOR - 30) { const L = lavaUnder(w, b.x, b.r); if (L) return quench(w, b, L) }
     if (P.kind === 'cracked' && b.kind === 'bomb') return explode(w, b)
+    if (P.kind === 'plank' && b.kind === 'boulder' && v > 150) { P.gone = true; w.events.push({ e: 'plank', x: (P.x0 + P.x1) / 2, y: (P.y0 + P.y1) / 2, poly: P }); return }
     if (b.kind === 'bomb' && (v > 230 || P.kind === 'hero')) return explode(w, b)
     if (P.kind === 'hero') {
       if (b.kind === 'boulder' && v > 70) return killHero(w, 'squash')
@@ -379,6 +411,7 @@
     b.alive = false
     const x = b.x, y = b.y, h = w.hero
     w.events.push({ e: 'boom', x, y })
+    for (const P of w.polys) if (P.kind === 'plank' && !P.gone && polyDist(P, x, y) < 50) { P.gone = true; w.events.push({ e: 'plank', x: (P.x0 + P.x1) / 2, y: (P.y0 + P.y1) / 2, poly: P }) }
     for (const P of w.polys) if (P.kind === 'cracked' && !P.gone && polyDist(P, x, y) < 64) { P.gone = true; w.events.push({ e: 'crack', x: (P.x0 + P.x1) / 2, y: (P.y0 + P.y1) / 2, poly: P }) }
     const hx = h.body ? h.body.x : h.x, hy = h.body ? h.body.y : h.y - 28
     if (!h.dead && Math.hypot(hx - x, hy - y) < 78) killHero(w, 'bomb')
@@ -456,7 +489,7 @@
     opt = opt || {}
     const w = create(def, opt); prepare(w)
     let k = 0, next = steps.length ? steps[0][1] : 1e9, base = 0
-    const limit = (opt.limit || 30)
+    const limit = (opt.limit || 60)
     while (w.t < limit) {
       if (k < steps.length && w.t >= base + next - 1e-9) {
         cut(w, steps[k][0]); base = w.t; k++

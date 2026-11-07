@@ -3,7 +3,7 @@ import './mute-auto.mjs'
 import { MUTE_LAUNCH, muteContext } from './mute.mjs'
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
-const ROOT = import.meta.dirname, PORT = 5965
+const ROOT = import.meta.dirname, PORT = 6275
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) } })
 await new Promise(r => setTimeout(r, 400))
 const b = await chromium.launch(MUTE_LAUNCH)
@@ -24,13 +24,12 @@ await p.evaluate(() => {
   roper.dbg.say('とどけぇぇ', 99)
   const s = 1.2; roper.dbg.setView({ s, ox: 6, oy: -58 * s })
   const d = document.createElement('div'); d.id = 'ogt'
-  d.innerHTML = `<i>広告</i><p class="a">広告で見た、あの</p><h1>ひも切り</h1><p class="b">本当に遊べます。</p><p class="c">全12面・ダウンロードなし</p>`
+  d.innerHTML = `<p class="a">勇者と宝箱</p><h1>ひもを切れ！</h1><p class="b">切る順番と、切る瞬間。</p><p class="c">基本12面＋上級18面・ブラウザで無料</p>`
   document.body.appendChild(d)
   const st = document.createElement('style'); st.textContent = `
     #ogt{position:fixed;left:450px;top:0;width:750px;height:630px;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:0 40px 0 34px;z-index:9}
-    #ogt i{font-style:normal;font-size:20px;background:#f2f2f2;color:#555;padding:2px 8px;border-radius:3px;margin-bottom:18px}
     #ogt .a{font-family:"RocknRoll One";font-size:40px;background:#fff;color:#111;padding:2px 14px 4px;transform:rotate(-2deg)}
-    #ogt h1{font-family:"RocknRoll One";font-weight:400;font-size:132px;line-height:1.05;color:#f2c230;-webkit-text-stroke:12px #0d0a07;paint-order:stroke fill;filter:drop-shadow(0 8px 0 #000);transform:rotate(-2deg);margin:6px 0 4px;white-space:nowrap}
+    #ogt h1{font-family:"RocknRoll One";font-weight:400;font-size:104px;line-height:1.05;color:#f2c230;-webkit-text-stroke:12px #0d0a07;paint-order:stroke fill;filter:drop-shadow(0 8px 0 #000);transform:rotate(-2deg);margin:6px 0 4px;white-space:nowrap}
     #ogt .b{font-family:"Shippori Mincho B1";font-weight:600;font-size:44px;color:#fff;text-shadow:0 3px 8px #000}
     #ogt .c{margin-top:22px;font-size:24px;font-weight:700;color:#d8c9b0}`
   document.head.appendChild(st)

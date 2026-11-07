@@ -4,7 +4,7 @@ import vm from 'node:vm'
 const root = new URL('..', import.meta.url).pathname
 vm.runInThisContext(readFileSync(root + 'engine.js', 'utf8')); vm.runInThisContext(readFileSync(root + 'levels.js', 'utf8'))
 const E = globalThis.RopeEngine, d = globalThis.LEVELS[Number(process.argv[2]) - 1]
-const mode = process.argv[3] || 'solve', steps = mode === 'none' ? [] : d[mode], lim = Number(process.argv[4] || 14)
+const mode = process.argv[3] || 'solve', steps = (mode === 'none' ? [] : /^w\d/.test(mode) ? d.wrongs[+mode.slice(1)] : d[mode]).map(s => [s[0], s[1]]), lim = Number(process.argv[4] || 14)
 const w = E.create(d); E.prepare(w)
 let k = 0, base = 0, next = steps.length ? steps[0][1] : 1e9
 while (w.t < lim && !(w.state !== 'play' && w.t > w.endAt)) {

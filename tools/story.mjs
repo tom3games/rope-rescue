@@ -4,7 +4,7 @@ import { MUTE_LAUNCH, muteContext } from '../mute.mjs'
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-const ROOT = new URL('..', import.meta.url).pathname, PORT = 5963
+const ROOT = new URL('..', import.meta.url).pathname, PORT = 6273
 const OUT = process.env.STORY_OUT || ROOT + 'shots/story'
 mkdirSync(OUT, { recursive: true })
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) } })
@@ -15,7 +15,8 @@ const ctx = await b.newContext({ locale: 'ja-JP', viewport: { width: 390, height
 await muteContext(ctx)
 const p = await ctx.newPage()
 await p.goto(`http://localhost:${PORT}/?notut=1`); await p.waitForFunction(() => window.__roperReady)
-for (let i = 0; i < 12; i++) {
+const N = await p.evaluate(() => window.LEVELS.length)
+for (let i = 0; i < N; i++) {
   await p.evaluate(([i, solve, after]) => {
     roper.load(i, { variant: { tie: false } }); roper.dbg.pause(true); roper.dbg.settleView()
     const d = window.LEVELS[i], st = solve ? d.solve : d.wrong, w = roper.w

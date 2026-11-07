@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 const ROOT = import.meta.dirname
 mkdirSync(ROOT + '/shots', { recursive: true })
-const PORT = 5961
+const PORT = 6271
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) } })
 await new Promise(r => setTimeout(r, 400))
 const URL0 = `http://localhost:${PORT}/`
@@ -30,12 +30,25 @@ async function open(browser, opts = {}, q = '') {
 }
 // ボタンを本物のマウス・指で押す（CTA は脈打つので座標で押す）
 const tap = async (p, sel, touch) => { const r = await p.locator(sel).boundingBox(); if (!r) throw new Error('no box ' + sel); const x = r.x + r.width / 2, y = r.y + r.height / 2; if (touch) await p.touchscreen.tap(x, y); else await p.mouse.click(x, y) }
-// ひもを横切る線（画面座標）。ひもの向きに直角に 72px
+// ひもを横切る線（画面座標・72px）。直角から試し、横・斜めと角度を変えて「そのひもだけ」を横切る線を使う（人も角度を変えてなぞる）
 async function swipeLine(p, id) {
-  const xy = await p.evaluate(id => roper.ropeXY(id), id)
-  expect(xy, 'rope not found ' + id)
-  const nx = -xy.ty, ny = xy.tx, L = 36
-  return { x0: xy.x - nx * L, y0: xy.y - ny * L, x1: xy.x + nx * L, y1: xy.y + ny * L, x: xy.x, y: xy.y }
+  const r = await p.evaluate(id => {
+    const E = window.RopeEngine, w = roper.w, v = roper.view, pt = E.ropePoint(w, id); if (!pt || pt.cut) return null
+    const top = document.querySelector('.hud').getBoundingClientRect().bottom, W = innerWidth, H = innerHeight
+    const segX = (ax, ay, bx, by, cx, cy, dx, dy) => { const d = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx); if (Math.abs(d) < 1e-9) return false; const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / d, u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / d; return t >= 0 && t <= 1 && u >= 0 && u <= 1 }
+    const sx = x => v.ox + x * v.s, sy = y => v.oy + y * v.s, base = Math.atan2(pt.tx, -pt.ty), L = 36
+    const X = sx(pt.x), Y = sy(pt.y)
+    for (const a of [base, 0, base + 0.45, base - 0.45, base + 0.9, base - 0.9, base + 1.3, base - 1.3]) {
+      const x0 = X - Math.cos(a) * L, y0 = Y - Math.sin(a) * L, x1 = X + Math.cos(a) * L, y1 = Y + Math.sin(a) * L
+      if (Math.min(x0, x1) < 2 || Math.max(x0, x1) > W - 2 || Math.min(y0, y1) < top + 1 || Math.max(y0, y1) > H - 2) continue
+      let clash = false
+      for (const q of w.ropes) { if (q.anyCut) continue; let hit = false; for (let j = 0; j < q.n; j++) { const a0 = E.nodePos(q, j), a1 = E.nodePos(q, j + 1); if (segX(x0, y0, x1, y1, sx(a0.x), sy(a0.y), sx(a1.x), sy(a1.y))) { hit = true; break } } if (hit !== (q.id === id)) { clash = true; break } }
+      if (!clash) return { x0, y0, x1, y1, x: X, y: Y }
+    }
+    return { none: true, x: X, y: Y }
+  }, id)
+  expect(r, 'rope not found ' + id); expect(!r.none, `no clean 72px swipe for ${id} at ${Math.round(r.x)},${Math.round(r.y)}`)
+  return r
 }
 const cutState = p => p.evaluate(() => roper.w.ropes.map(r => r.id + (r.anyCut ? 1 : 0)).join())
 // how: 'mouse'（なぞる）・'touch'（Chromium の指でなぞる。CDP の本物のタッチ）・'tap'（指で押すだけ）
@@ -92,10 +105,10 @@ const variance = (p, sel) => p.evaluate(sel => {
   return Math.round(s2 / n - (s / n) ** 2)
 }, sel)
 const SIZES = [[360, 640, 'small'], [390, 844, 'phone'], [430, 932, 'big']]
-const N = 12
 
 const browser = await chromium.launch(MUTE_LAUNCH)
 const p = await open(browser)
+const N = await p.evaluate(() => window.LEVELS.length), NB = await p.evaluate(() => window.LEVELS.filter(d => !d.adv).length)
 await t('起動時にエラーが出ない・ロード画面が消える', async () => { expect(p.errs.length === 0, p.errs.join('|')); const g = await p.evaluate(() => document.getElementById('boot').classList.contains('gone')); expect(g, 'boot visible') })
 await t('ブラウザの拡大が起きない（viewport・ピンチ・Ctrl+ホイール・Ctrl+プラス）', async () => {
   const r = await p.evaluate(() => {
@@ -111,8 +124,17 @@ await t('OGP 一式がある', async () => {
   const r = await p.evaluate(() => ['og:title', 'og:description', 'og:image', 'og:url', 'og:type'].map(k => !!document.querySelector(`meta[property="${k}"]`)).concat(!!document.querySelector('meta[name="twitter:card"]')))
   expect(r.every(Boolean), JSON.stringify(r))
 })
-await t('タイトルの後ろで広告みたいに勝手に解く（何か描けている・ひもが切れる）', async () => {
-  await p.waitForTimeout(2200); const v = await variance(p, '#stage'); const cut = await p.evaluate(() => roper.w.cuts.length)
+await t('全30面・基本12面', async () => { expect(N === 30 && NB === 12, N + ' ' + NB); return N })
+await t('広告の言葉がどこにも無い（文言・題名・OGP・画面）', async () => {
+  const r = await p.evaluate(() => {
+    const txt = JSON.stringify(window.TXT, (k, v) => typeof v === 'function' ? v.toString() + v(3, true) + v(0) + v(2) : v)
+    const meta = [...document.querySelectorAll('meta')].map(m => m.content).join(' ') + document.title + document.body.innerText
+    return { ja: /広告/.test(txt + meta), en: /\b(ad|ads|the ad)\b/i.test(txt.replace(/\badv/g, '')), title: document.title }
+  })
+  expect(!r.ja && !r.en && /ひもを切れ/.test(r.title), JSON.stringify(r)); return r.title
+})
+await t('タイトルの後ろで勝手に解く（何か描けている・ひもが切れる）', async () => {
+  await p.waitForFunction(() => roper.w.cuts.length >= 1, null, { timeout: 8000 }).catch(() => {}); const v = await variance(p, '#stage'); const cut = await p.evaluate(() => roper.w.cuts.length)
   expect(v > 300 && cut >= 1, JSON.stringify({ v, cut })); return v
 })
 await t('始めるで1面・チュートリアルの指がひもの近くにある', async () => {
@@ -133,7 +155,7 @@ await t('チュートリアルは切ると消える・遊び中の文字は2つ�
 
 // ---- 全12面: 本物のなぞりで、解き方ならクリア・間違いなら失敗・何もしないとクリアしない
 for (let i = 0; i < N; i++) {
-  const d = await p.evaluate(i => ({ solve: window.LEVELS[i].solve, wrong: window.LEVELS[i].wrong }), i)
+  const d = await p.evaluate(i => ({ solve: window.LEVELS[i].solve, wrong: window.LEVELS[i].wrong, wrongs: window.LEVELS[i].wrongs || [] }), i)
   await t(`${i + 1}面: 解き方でクリア ${d.solve.map(s => s.join('@')).join('→')}`, async () => {
     const r = await playLevel(p, i, d.solve, 'mouse'); expect(r.state === 'clear' && r.sheet, JSON.stringify(r))
     const nx = await p.evaluate(() => document.getElementById('bNext').textContent); expect(nx === '次へ', nx)
@@ -146,6 +168,9 @@ for (let i = 0; i < N; i++) {
     expect(nx[0] === 'もう一回' && nx[1].length > 4, JSON.stringify(nx))
     await p.screenshot({ path: `${ROOT}/shots/lv${i + 1}-fail.png` })
     return r.reason
+  })
+  for (const [k, wr] of d.wrongs.entries()) await t(`${i + 1}面: 間違い${k + 2}で失敗 ${wr.map(s => s.slice(0, 2).join('@')).join('→')}`, async () => {
+    const r = await playLevel(p, i, wr, 'mouse'); expect(r.state === 'fail' && r.sheet, JSON.stringify(r)); return r.reason
   })
   await t(`${i + 1}面: 何もしないとクリアしない（20秒）`, async () => {
     await p.evaluate(i => { roper.load(i, { variant: { tie: false } }); roper.dbg.pause(true); roper.dbg.step(1200) }, i)
@@ -177,16 +202,38 @@ await t('2回失敗した面は、次に切るひもが光る（ヒント）', a
   expect(before === null && after === 'B', JSON.stringify({ before, after }))
   await p.evaluate(() => roper.dbg.pause(true)); await cutRope(p, 'B', 'mouse'); expect(await p.evaluate(() => roper.hint) === 'A', 'hint moves to next rope')
 })
+for (let i = NB; i < N; i++) await t(`${i + 1}面: 2回失敗するとヒントが順に光る（本物のなぞりで台本どおり）`, async () => {
+  const st = await p.evaluate(i => window.LEVELS[i].solve, i)
+  await p.evaluate(i => { roper.dbg.fails(i, 2); roper.load(i, { variant: { tie: false } }); roper.dbg.pause(true); roper.dbg.settleView() }, i)
+  const seen = []
+  for (const [id, wait, flag] of st) {
+    const h0 = await p.evaluate(() => roper.hint); expect(h0 === id, `hint ${h0} expected ${id}`)
+    await p.evaluate(n => roper.dbg.step(n), Math.ceil(wait * 60 - 1e-6))
+    const now = await p.evaluate(() => roper.dbg.hintNow()); expect(now, `hint not bright at ${id}`)
+    await cutRope(p, id, 'mouse'); seen.push(id)
+  }
+  const r = await finishRun(p); expect(r.state === 'clear', JSON.stringify(r)); return seen.join('')
+})
+await t('タイミングの手のヒントは、早すぎると薄い（21面・26面）', async () => {
+  const r = await p.evaluate(() => [20, 25].map(i => { roper.dbg.fails(i, 2); roper.load(i); roper.dbg.pause(true); const a = roper.dbg.hintNow(); roper.dbg.step(Math.round(window.LEVELS[i].solve[0][1] * 60)); return [a, roper.dbg.hintNow()] }))
+  expect(r.every(([a, b]) => a === false && b === true), JSON.stringify(r))
+})
+await t('12面クリアで上級13面へ続く（語りが変わる）', async () => {
+  const r = await playLevel(p, NB - 1, await p.evaluate(i => window.LEVELS[i].solve, NB - 1), 'mouse'); expect(r.state === 'clear', JSON.stringify(r))
+  const n = await p.evaluate(() => document.getElementById('narr').textContent)
+  await tap(p, '#bNext'); const lv = await p.evaluate(() => [roper.mode, roper.lv])
+  expect(n === '基本は、ここまでです。この先は上級です。' && lv[0] === 'play' && lv[1] === NB, JSON.stringify([n, lv]))
+})
 await t('タイミングの面のヒントは、切る時だけ強く光る（7面）', async () => {
   const r = await p.evaluate(() => { roper.dbg.fails(6, 2); roper.load(6); roper.dbg.pause(true); const a = [roper.hint, roper.dbg.hintNow()]; roper.dbg.step(Math.round(3.6 * 60)); a.push(roper.dbg.hintNow()); return a })
   expect(r[0] === 'A' && r[1] === false && r[2] === true, JSON.stringify(r))
 })
-await t('失敗の語りは最初が「広告では、ここで成功していました。」', async () => {
+await t('失敗の語りは最初が「練習では、うまくいっていました。」', async () => {
   const q = await open(browser)
   await q.evaluate(() => { roper.load(0); roper.dbg.pause(true); roper.dbg.settleView() })
   await q.evaluate(() => roper.dbg.step(30)); await cutRope(q, 'B', 'mouse'); await finishRun(q)
   const n = await q.evaluate(() => document.getElementById('narr').textContent); await q.close()
-  expect(n === '広告では、ここで成功していました。', n)
+  expect(n === '練習では、うまくいっていました。', n)
 })
 await t('画像で保存・Xでポスト（失敗の画面）', async () => {
   await playLevel(p, 0, [['B', 0.5]], 'mouse')
@@ -202,18 +249,32 @@ await t('まれな変化（ネクタイの魔物）でも落ちない', async ()
   const r = await finishRun(p); await p.screenshot({ path: `${ROOT}/shots/rare.png` })
   expect(r.state === 'clear' && !p.errs.length, JSON.stringify(r) + p.errs.join('|'))
 })
-await t('12面クリアで最後の画面（絵が描けている・最初から・支援リンク）', async () => {
-  const r = await playLevel(p, 11, await p.evaluate(() => window.LEVELS[11].solve), 'mouse'); expect(r.state === 'clear', JSON.stringify(r))
+await t('30面クリアで最後の画面（絵が描けている・最初から・支援リンク）', async () => {
+  const r = await playLevel(p, N - 1, await p.evaluate(i => window.LEVELS[i].solve, N - 1), 'mouse'); expect(r.state === 'clear', JSON.stringify(r))
   await tap(p, '#bNext'); await p.waitForTimeout(300)
   const v = await variance(p, '#endCv'), m = await p.evaluate(() => roper.mode), sup = await p.evaluate(() => !!document.getElementById('tmSupport'))
   await p.screenshot({ path: `${ROOT}/shots/end.png` })
   expect(m === 'end' && v > 300 && sup, JSON.stringify({ m, v, sup }))
   await tap(p, '#bAgain'); expect(await p.evaluate(() => roper.mode === 'play' && roper.lv === 0), 'again')
 })
+await t('ステージ選択: 基本12・上級18の2ページ（上級はクリアした所まで開く）', async () => {
+  await tap(p, '#bMenu'); await tap(p, '#bStages')
+  await tap(p, '#tabB'); const a = await p.evaluate(() => [document.querySelectorAll('#grid button').length, document.getElementById('tabB').classList.contains('on')])
+  await tap(p, '#tabA'); const b = await p.evaluate(() => [document.querySelectorAll('#grid button').length, document.querySelectorAll('#grid button:not(.lock)').length, document.querySelector('#grid button b').textContent])
+  await p.screenshot({ path: `${ROOT}/shots/stages-adv.png` })
+  await tap(p, '#grid button:not(.lock) >> nth=0'); const c = await p.evaluate(() => [roper.mode, roper.lv])
+  expect(a[0] === 12 && a[1] && b[0] === 18 && b[1] >= 1 && b[2] === '13' && c[0] === 'play' && c[1] === 12, JSON.stringify([a, b, c]))
+})
 await t('English に切り替えると文言が英語', async () => {
   await tap(p, '#bMenu'); await tap(p, '#bLang')
   const r = await p.evaluate(() => [document.getElementById('bStart').textContent, document.getElementById('tl2').textContent])
   await p.screenshot({ path: `${ROOT}/shots/title-en.png` })
+  for (const [w, h] of [[360, 640], [390, 844], [430, 932]]) {
+    await p.setViewportSize({ width: w, height: h }); await p.waitForTimeout(150)
+    const o = await p.evaluate(() => { const rg = document.createRange(); rg.selectNodeContents(document.getElementById('tl2')); const b = rg.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right), innerWidth] })
+    expect(o[0] >= 0 && o[1] <= o[2], 'english title overflow ' + JSON.stringify(o))
+  }
+  await p.setViewportSize({ width: 390, height: 844 })
   await tap(p, '#bStart')
   const c = await p.evaluate(() => document.getElementById('capT').textContent)
   expect(/Play|Continue/.test(r[0]) && /[A-Za-z]/.test(c), JSON.stringify(r) + c)
@@ -240,16 +301,18 @@ for (const [w, h, name] of SIZES) {
   const views = {}
   await q.waitForTimeout(400)
   views.title = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-title.png` })
+  await t(`${name}: 題名の文字が画面からはみ出さない`, async () => { const o = await q.evaluate(() => { const rg = document.createRange(); rg.selectNodeContents(document.getElementById('tl2')); const b = rg.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.right), innerWidth] }); expect(o[0] >= 0 && o[1] <= o[2], JSON.stringify(o)); return o })
   await tap(q, '#bHow'); views.how = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-how.png` }); await tap(q, '#bHowClose')
-  await tap(q, '#bStages'); views.stages = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-stages.png` }); await tap(q, '#bStBack')
+  await tap(q, '#bStages'); views.stages = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-stages.png` })
+  await tap(q, '#tabA'); views.stagesAdv = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-stages-adv.png` }); await tap(q, '#bStBack')
   await tap(q, '#bStart'); await q.waitForTimeout(300); views.play = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-play.png` })
-  await t(`${name}: 全12面のひもの切る所となぞる線が画面内・押せる幅44px以上`, async () => {
+  await t(`${name}: 全${N}面のひもの切る所となぞる線が画面内・押せる幅44px以上`, async () => {
     const out = []
     for (let i = 0; i < N; i++) {
       const r = await q.evaluate(i => { roper.load(i); roper.dbg.pause(true); roper.dbg.settleView(); const v = roper.view, hud = document.querySelector('.hud').getBoundingClientRect().bottom; return { pts: roper.w.ropes.map(r => [r.id, roper.ropeXY(r.id)]), s: v.s, top: v.oy, hud, W: innerWidth, H: innerHeight } }, i)
       for (const [id, xy] of r.pts) {
-        const nx = -xy.ty * 36, ny = xy.tx * 36
-        for (const [x, y] of [[xy.x, xy.y], [xy.x - nx, xy.y - ny], [xy.x + nx, xy.y + ny]]) if (x < 2 || x > r.W - 2 || y < r.hud || y > r.H - 2) out.push(`${i + 1}${id}:${Math.round(x)},${Math.round(y)}`)
+        if (xy.x < 2 || xy.x > r.W - 2 || xy.y < r.hud || xy.y > r.H - 2) out.push(`${i + 1}${id}:${Math.round(xy.x)},${Math.round(xy.y)}`)
+        try { await swipeLine(q, id) } catch (e) { out.push(`${i + 1}${id}:${e.message}`) }
       }
       if (r.top < r.hud - 1) out.push(`${i + 1}: world under hud`)
       if (Math.max(14, 23 / r.s) * 2 * r.s < 44) out.push(`${i + 1}: hit ${r.s}`)
@@ -263,7 +326,7 @@ for (const [w, h, name] of SIZES) {
     const r = await q.evaluate(() => { const v = roper.view, top = document.getElementById('sheet').getBoundingClientRect().top; return { heroY: v.oy + 576 * v.s, top } })
     expect(r.heroY <= r.top + 2, JSON.stringify(r)); return r
   })
-  await playLevel(q, 11, await q.evaluate(() => window.LEVELS[11].solve), 'mouse')
+  await playLevel(q, N - 1, await q.evaluate(i => window.LEVELS[i].solve, N - 1), 'mouse')
   await tap(q, '#bNext'); await q.waitForTimeout(300)
   views.end = await fit(q); await q.screenshot({ path: `${ROOT}/shots/fit-${name}-end.png` })
   for (const [v, r] of Object.entries(views)) await t(`一画面に収まる ${name} ${w}x${h} ${v}`, async () => { expect(!r.over.length, JSON.stringify(r)) })

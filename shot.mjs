@@ -4,7 +4,7 @@ import { MUTE_LAUNCH, muteContext } from './mute.mjs'
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
-const ROOT = import.meta.dirname, PORT = 5962
+const ROOT = import.meta.dirname, PORT = 6272
 mkdirSync(ROOT + '/shots', { recursive: true })
 const server = spawn(process.execPath, ['server.mjs'], { cwd: ROOT, env: { ...process.env, PORT: String(PORT) } })
 await new Promise(r => setTimeout(r, 400))

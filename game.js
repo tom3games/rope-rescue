@@ -1,4 +1,4 @@
-// 広告で見たあのひも切り。描画・画面・音・入力。物理は engine.js、面は levels.js、文言は data.js
+// ひもを切れ！勇者と宝箱。描画・画面・音・入力。物理は engine.js、面は levels.js、文言は data.js
 ;(function () {
   'use strict'
   window.__jsUp = true
@@ -39,6 +39,7 @@
     grunt: ['snd/grunt1.mp3', 'snd/grunt2.mp3', 'snd/grunt3.mp3'], bub: ['snd/bub1.mp3', 'snd/bub2.mp3', 'snd/bub3.mp3'],
     boom: 'snd/boom.mp3', crack: 'snd/crack.mp3', scream: ['snd/scream1.mp3', 'snd/scream2.mp3'],
     j_win: 'snd/j_win.mp3', j_lose: 'snd/j_lose.mp3', j_end: 'snd/j_end.mp3', click: 'snd/click.mp3',
+    boing: ['snd/boing1.mp3', 'snd/boing2.mp3'], plank: ['snd/plank1.mp3', 'snd/plank2.mp3'],
   })
   Snd.muted = muted
   let audioOn = false, lavaLoop = false
@@ -126,6 +127,41 @@
     }
     c.restore()
   }
+  // バネ: 台・ばね・板。跳ねた直後は縮む
+  function drawSpring(c, P, fl) {
+    fl = fl == null ? E.FLOOR : fl
+    // 床から板の下までの台（傾いていても浮いて見えないように）
+    const ca = Math.cos(P.ang), sa = Math.sin(P.ang), hw = P.sw / 2
+    const lx = P.cx - ca * hw + sa * 12, ly = P.cy - sa * hw + ca * 12, rx = P.cx + ca * hw + sa * 12, ry = P.cy + sa * hw + ca * 12
+    c.save(); c.beginPath(); c.moveTo(lx + 4, ly); c.lineTo(rx - 4, ry); c.lineTo(rx - 4, fl); c.lineTo(lx + 4, fl); c.closePath()
+    c.fillStyle = '#3a3d42'; c.fill(); c.strokeStyle = '#15110d'; c.lineWidth = 1.6; c.stroke()
+    c.strokeStyle = 'rgba(255,255,255,.12)'; c.beginPath(); for (let x = Math.min(lx, rx) + 10; x < Math.max(lx, rx) - 6; x += 12) { c.moveTo(x, fl - 2); c.lineTo(x, Math.max(ly, ry) - 4) } c.stroke()
+    c.restore()
+    c.save(); c.translate(P.cx, P.cy); c.rotate(P.ang)
+    const sq = P.squash || 0, top = -5 + sq * 5
+    c.fillStyle = '#4b4f55'; c.strokeStyle = '#15110d'; c.lineWidth = 1.6
+    c.beginPath(); c.roundRect(-hw + 4, 8, P.sw - 8, 6, 2); c.fill(); c.stroke()
+    for (const sx of [-hw * 0.55, 0, hw * 0.55]) {
+      c.beginPath(); c.moveTo(sx, 8)
+      for (let i = 1; i <= 4; i++) c.lineTo(sx + (i % 2 ? -5 : 5), 8 - (8 - top - 2) * i / 4)
+      c.strokeStyle = '#15110d'; c.lineWidth = 3.4; c.stroke(); c.strokeStyle = '#c9ced4'; c.lineWidth = 1.6; c.stroke()
+    }
+    c.fillStyle = '#d23b2a'; c.beginPath(); c.roundRect(-hw, top - 4, P.sw, 6, 2); c.fill(); c.strokeStyle = '#15110d'; c.lineWidth = 1.8; c.stroke()
+    c.fillStyle = 'rgba(255,255,255,.35)'; c.fillRect(-hw + 3, top - 3, P.sw - 6, 1.6)
+    c.restore()
+  }
+  // 木の板
+  function drawPlank(c, P) {
+    c.save(); polyPath(c, P); c.fillStyle = '#9c6b3a'; c.fill(); c.clip()
+    c.strokeStyle = 'rgba(60,35,15,.55)'; c.lineWidth = 1
+    for (let x = P.x0 + 28; x < P.x1; x += 30) { c.beginPath(); c.moveTo(x, P.y0 - 20); c.lineTo(x + 2, P.y1 + 20); c.stroke() }
+    c.strokeStyle = 'rgba(255,220,170,.25)'; c.beginPath(); for (const e of P.edges) if (e.ny < -0.5) { c.moveTo(e.ax, e.ay + 2.2); c.lineTo(e.bx, e.by + 2.2) } c.stroke()
+    c.restore()
+    c.save(); polyPath(c, P); c.strokeStyle = '#2b1a0c'; c.lineWidth = 2; c.lineJoin = 'round'; c.stroke()
+    c.fillStyle = '#3b2c1e'; for (let x = P.x0 + 8; x < P.x1 - 4; x += 30) { const y = topAt(P, x); c.beginPath(); c.arc(x, y + 5, 1.3, 0, 6.2832); c.fill() }
+    c.restore()
+  }
+  function topAt(P, x) { let best = P.y1; for (const e of P.edges) if (e.ny < -0.5 && x >= Math.min(e.ax, e.bx) && x <= Math.max(e.ax, e.bx)) best = Math.min(best, e.ay + (e.by - e.ay) * (x - e.ax) / ((e.bx - e.ax) || 1)); return best }
   function drawAnchor(c, x, y) {
     c.save()
     c.fillStyle = '#4b4f55'; c.strokeStyle = '#15110d'; c.lineWidth = 1.6
@@ -289,6 +325,14 @@
     shape(c, body, () => c.ellipse(0, 0 - Math.abs(walk) * 0.8, 16, 14, 0, 0, 6.2832))
     c.fillStyle = belly; c.beginPath(); c.ellipse(3, 5, 9, 6.5, 0, 0, 6.2832); c.fill()
     const dead = !!ghost
+    if (b.sleep && !dead) {   // 寝ている: 目を閉じて、Z が上がる
+      c.strokeStyle = '#1b130c'; c.lineWidth = 1.8; c.lineCap = 'round'; c.beginPath(); for (const ex of [1, 9]) { c.moveTo(ex - 3, -4); c.quadraticCurveTo(ex, -1.5, ex + 3, -4) } c.stroke()
+      c.fillStyle = '#2a0f0c'; c.beginPath(); c.ellipse(6, 5, 3, 1.6, 0, 0, 6.2832); c.fill()
+      c.restore(); c.save(); c.translate(b.x, b.y)
+      c.font = '700 11px sans-serif'; c.textAlign = 'center'; c.lineJoin = 'round'
+      for (let i = 0; i < 3; i++) { const k = (t * 0.45 + i / 3) % 1; c.globalAlpha = Math.sin(k * Math.PI); c.lineWidth = 3; c.strokeStyle = '#1b130c'; c.strokeText('Z', 10 + k * 14, -18 - k * 26); c.fillStyle = '#e8f0ff'; c.fillText('Z', 10 + k * 14, -18 - k * 26) }
+      c.restore(); return
+    }
     for (const ex of [1, 9]) {
       if (dead) { c.strokeStyle = '#1b130c'; c.lineWidth = 1.6; c.beginPath(); c.moveTo(ex - 2, -6); c.lineTo(ex + 2, -2); c.moveTo(ex + 2, -6); c.lineTo(ex - 2, -2); c.stroke(); continue }
       shape(c, '#fff8e6', () => c.arc(ex, -4, 3.6, 0, 6.2832), 1.1); c.fillStyle = '#7a1010'; c.beginPath(); c.arc(ex + 1, -3.6, 1.7, 0, 6.2832); c.fill()
@@ -445,10 +489,11 @@
     drawTorches(c, w, t)
     const R = rng(77)
     for (const P of w.polys) if (P.kind === 'cracked' && !P.gone) drawStone(c, P, R, true)
+    for (const P of w.polys) { if (P.kind === 'plank' && !P.gone) drawPlank(c, P); else if (P.kind === 'spring') { drawSpring(c, P); if (!opt.thumb) P.squash = Math.max(0, (P.squash || 0) - 0.08) } }
     drawLava(c, w, t)
     drawRopes(c, w, t, opt.thumb ? null : hintRope())
     drawBodies(c, w, t)
-    for (const m of w.walkers) if (m.alive) drawMonster(c, { x: m.x, y: m.y - 15, face: m.face, moving: m.moving, tie: m.tie }, t)
+    for (const m of w.walkers) if (m.alive) drawMonster(c, { x: m.x, y: m.y - 15, face: m.face, moving: m.moving, tie: m.tie, sleep: m.wait > 0 }, t)
     const h = w.hero
     drawHero(c, h, t, w.state === 'clear', !!h.body && !h.dead, w.t)
     for (const b of w.bodies) if (b.alive && b.kind === 'boulder' && Math.abs(b.x - h.x) < 40 && b.y > h.y - 80) drawBoulder(c, b)   // 勇者の上に落ちた岩は前に
@@ -461,11 +506,14 @@
     return null
   }
   // タイミングの面のヒント: 台本の時刻の前後0.3秒だけ「今」と光らせる
+  // 上級の面は手ごとの印: 't' は前後0.3秒だけ、'w' はその秒数を過ぎたら強く光る
   function hintNow() {
-    const id = hintRope(); if (!id || !world.def.timing) return true
-    const k = world.def.solve.findIndex(st => st[0] === id), base = world.cuts.length ? world.cuts[world.cuts.length - 1].t : 0
-    const dt = world.t - base - world.def.solve[k][1]
-    return dt > -0.3 && dt < 0.3
+    const id = hintRope(); if (!id) return true
+    const d = world.def, k = d.solve.findIndex(st => st[0] === id), st = d.solve[k]
+    const flag = d.adv ? st[2] : d.timing ? 't' : null
+    if (!flag) return true
+    const base = world.cuts.length ? world.cuts[world.cuts.length - 1].t : 0, dt = world.t - base - st[1]
+    return flag === 'w' ? dt > -0.3 : dt > -0.3 && dt < 0.3
   }
 
   // ---- 面を始める
@@ -482,7 +530,7 @@
     bg = null; fx.length = 0; trail.length = 0; bubble = null; shake = 0; sheetOn = false; saidMonster = false; saidFear = false; prevState = 'play'
     $('sheet').hidden = true; $('stamp').textContent = ''; $('stamp').className = ''
     $('lvNum').textContent = T.level(lvIdx + 1)
-    $('capT').textContent = T.caps[lvIdx] || ''
+    $('capT').textContent = T.names[lvIdx] || ''
     hintOn = (fails[lvIdx] || 0) >= 2
     tutorOn = lvIdx === 0 && !Q.has('notut') && (fails[0] || 0) < 3 && best < 1
     $('capT').parentElement.style.visibility = tutorOn ? 'hidden' : ''
@@ -508,16 +556,16 @@
   }
   function applyLang() {
     T = TXT[lang]; document.documentElement.lang = lang
-    $('tl1').textContent = T.title1; $('tl2').textContent = T.title2; $('tl2').style.fontSize = lang === 'en' ? 'min(12.5vw,58px)' : ''; $('tl3').textContent = T.titleSub
+    $('tl1').textContent = T.title1; $('tl2').textContent = T.title2; $('tl2').style.fontSize = lang === 'en' ? 'min(10.5vw,50px)' : ''; $('tl3').textContent = T.titleSub
     $('bStart').textContent = best > 0 && best < LV.length ? T.cont : T.start
     $('bStages').textContent = T.stages; $('bHow').textContent = T.how; $('bLang').textContent = T.lang
     $('stH').textContent = T.stages; $('bStBack').textContent = T.back
     $('howH').textContent = T.howH; $('howLead').textContent = T.howLead; $('bHowClose').textContent = T.back
     $('howFoot').textContent = T.howFoot; $('lPrivacy').textContent = T.privacy
-    $('adTag').textContent = T.adTag
+    $('tabB').textContent = T.tabBase; $('tabA').textContent = T.tabAdv
     $('bSave').textContent = T.save; $('bPost').textContent = T.post; $('bEndSave').textContent = T.save; $('bEndPost').textContent = T.post
     $('bAgain').textContent = T.again
-    if (world) { $('capT').textContent = T.caps[lvIdx]; $('tutorT').textContent = coarse ? T.tutor : T.tutorPc }
+    if (world) { $('capT').textContent = T.names[lvIdx]; $('tutorT').textContent = coarse ? T.tutor : T.tutorPc }
     const ul = $('howList'); ul.textContent = ''
     for (const [k, s] of T.howList) { const li = document.createElement('li'), c = document.createElement('canvas'); c.width = 88; c.height = 88; drawIcon(c, k); const sp = document.createElement('span'); sp.textContent = s; li.append(c, sp); ul.append(li) }
   }
@@ -537,11 +585,24 @@
     if (k === 'monster') { c.save(); c.translate(22, 26); c.scale(1.1, 1.1); c.translate(-22, -26); drawMonster(c, { x: 22, y: 26, face: -1 }, 0); c.restore() }
     if (k === 'boulder') { drawBoulder(c, { x: 22, y: 24, r: 15 }) }
     if (k === 'bomb') drawBomb(c, { x: 22, y: 28 }, 0.2, true)
+    if (k === 'spring') {
+      const a = 0.42, P = { cx: 16, cy: 34, sw: 24, ang: a, squash: 0 }
+      drawSpring(c, P, 44)
+      c.save(); c.lineCap = 'round'; c.strokeStyle = '#fff'; c.lineWidth = 1.6; c.setLineDash([2.4, 2.6]); c.beginPath(); c.moveTo(18, 26); c.quadraticCurveTo(28, 6, 40, 12); c.stroke(); c.restore()
+      const pl = E.makePoly(E.rectPoly(26, 30, 18, 5), 'plank'); drawPlank(c, pl)
+    }
   }
-  function openStages() {
+  const NBASE = LV.filter(d => !d.adv).length
+  let stTab = null
+  function openStages(tab) {
     show('stages')
-    const g = $('grid'); g.textContent = ''
+    if (tab == null) tab = stTab != null ? stTab : best >= NBASE ? 1 : 0
+    stTab = tab
+    $('tabB').classList.toggle('on', tab === 0); $('tabA').classList.toggle('on', tab === 1)
+    $('tabB').setAttribute('aria-selected', tab === 0); $('tabA').setAttribute('aria-selected', tab === 1)
+    const g = $('grid'); g.textContent = ''; g.classList.toggle('adv', tab === 1)
     LV.forEach((d, i) => {
+      if (!!d.adv !== (tab === 1)) return
       const b = document.createElement('button'), c = document.createElement('canvas')
       c.width = 120; c.height = 200
       const w = E.create(d), x = c.getContext('2d'); x.scale(120 / 360, 200 / 600); drawWorld(x, w, 0, null, { thumb: true })
@@ -551,6 +612,7 @@
       if (lock) b.classList.add('lock')
       b.disabled = lock
       b.onclick = () => { click(); show('play'); load(i) }
+      b.setAttribute('aria-label', `${i + 1} ${T.names[i]}`)
       g.append(b)
     })
   }
@@ -563,7 +625,7 @@
     let line
     if (ok) {
       best = Math.max(best, lvIdx + 1); store.set('roper_best', best)
-      line = Math.random() < 0.18 ? pick(T.narrClear.slice(3)) : T.narrClear[0]
+      line = lvIdx === NBASE - 1 ? T.narrBase : Math.random() < 0.18 ? pick(T.narrClear.slice(3)) : T.narrClear[0]
       $('stamp').textContent = T.stampClear; $('stamp').className = ''; void $('stamp').offsetWidth; $('stamp').className = 'on'
       $('bNext').textContent = T.next
       Snd.duck(0.3, 2); play('j_win', { vol: 0.9, jitter: 0 })
@@ -587,8 +649,8 @@
     const g = c.getContext('2d')
     g.fillStyle = '#1e1813'; g.fillRect(0, 0, 1080, 1350)
     g.textAlign = 'center'; g.textBaseline = 'middle'
-    g.font = '64px "RocknRoll One",sans-serif'; g.lineJoin = 'round'; g.lineWidth = 16; g.strokeStyle = '#000'; g.strokeText(T.caps[lvIdx], 540, 92); g.fillStyle = '#fff'; g.fillText(T.caps[lvIdx], 540, 92)
-    g.fillStyle = '#f2f2f2'; g.fillRect(60, 40, 64, 30); g.fillStyle = '#555'; g.font = '22px sans-serif'; g.fillText(T.adTag, 92, 56)
+    const head = `${lvIdx + 1}. ${T.names[lvIdx]}`
+    g.font = '64px "RocknRoll One",sans-serif'; g.lineJoin = 'round'; g.lineWidth = 16; g.strokeStyle = '#000'; g.strokeText(head, 540, 92); g.fillStyle = '#fff'; g.fillText(head, 540, 92)
     const s = 1.75, ox = (1080 - E.W * s) / 2, oy = 170
     g.save(); g.translate(ox, oy); g.scale(s, s); drawWorld(g, world, clock, bg && bg.c); g.restore()
     if (ok) { g.save(); g.translate(540, 520); g.rotate(-0.14); g.font = '92px "RocknRoll One",sans-serif'; g.lineWidth = 22; g.strokeStyle = '#000'; g.strokeText(T.stampClear, 0, 0); g.fillStyle = '#ffe14a'; g.fillText(T.stampClear, 0, 0); g.restore() }
@@ -614,7 +676,6 @@
     g.restore()
     g.save(); g.translate(540 - 180 * 4.2, 740 - 200 * 4.2); g.scale(4.2, 4.2); drawHero(g, { x: 180, y: 200, dead: false, fear: 0, joy: 1, wet: 0 }, 0.26, true); g.restore()
     g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round'
-    g.fillStyle = '#f2f2f2'; g.fillRect(60, 120, 70, 32); g.fillStyle = '#555'; g.font = '22px sans-serif'; g.fillText(T.adTag, 95, 137)
     g.font = '86px "RocknRoll One",sans-serif'; g.lineWidth = 20; g.strokeStyle = '#000'; g.strokeText(T.endH, 540, 230); g.fillStyle = '#ffe14a'; g.fillText(T.endH, 540, 230)
     g.font = '600 42px "Shippori Mincho B1",serif'; const sub = T.endSub(totalFails); const tw = g.measureText(sub).width
     g.fillStyle = 'rgba(0,0,0,.8)'; g.fillRect(540 - tw / 2 - 26, 925, tw + 52, 76); g.fillStyle = '#fff'; g.fillText(sub, 540, 964)
@@ -663,6 +724,8 @@
         }
         case 'cagebreak': play('clank', { vol: 0.9 }); play('grunt', { vol: 0.7, rate: 1.1 }, 200); for (let i = 0; i < 6; i++) addFx('chip', e.x, e.y, { vx: (i - 3) * 30, vy: -90, col: '#7d848c', r: i, life: 0.9 }); break
         case 'boom': play('boom', { vol: 1 }); shake = 1; addFx('boom', e.x, e.y, { life: 0.55 }); for (let i = 0; i < 10; i++) addFx('puff', e.x, e.y, { col: '70,60,55', a: 0.8, r: 9, vx: Math.cos(i) * 60, vy: Math.sin(i) * 60 - 30, life: 1.2 }); break
+        case 'boing': play('boing', { vol: 0.8 }, 120); for (let i = 0; i < 5; i++) addFx('puff', e.x + (i - 2) * 8, e.y, { col: '200,190,170', a: 0.5, r: 4, vy: -16, vx: (i - 2) * 12, life: 0.5 }); break
+        case 'plank': play('plank', { vol: 0.9 }); play('wood', { vol: 0.6, rate: 0.8 }, 90); for (let i = 0; i < 12; i++) addFx('chip', e.x + (i - 6) * 9, e.y, { vx: (i - 6) * 18, vy: -70 - (i % 4) * 25, col: i % 2 ? '#9c6b3a' : '#6b4a2a', r: i, life: 1 }); shake = Math.max(shake, 0.4); break
         case 'crack': play('crack', { vol: 0.9 }); for (let i = 0; i < 14; i++) addFx('chip', e.x + (i % 3 - 1) * 6, e.y + (i - 7) * 10, { vx: 40 + (i % 4) * 30, vy: -80 + (i % 5) * 20, col: '#a8957a', r: i, life: 1 }); break
         case 'smash': case 'chestboom': play('crack', { vol: 0.8 }); play('wood', { vol: 0.9, rate: 0.8 }); for (let i = 0; i < 12; i++) addFx('chip', e.x, e.y, { vx: (i - 6) * 22, vy: -120 - (i % 3) * 30, col: i % 3 ? '#8a5426' : '#f2c230', r: i, life: 1.1 }); break
         case 'win': {
@@ -725,17 +788,13 @@
     ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * (view.ox + sx), dpr * (view.oy + sy))
     ctx.fillStyle = '#2a211a'; ctx.fillRect(-30, -30, E.W + 60, E.H + 60)
     drawWorld(ctx, world, clock, bg.c)
-    if (mode === 'title') {   // 広告の枠
-      ctx.lineWidth = 3 / view.s; ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.strokeRect(0, 0, E.W, E.H)
-      ctx.fillStyle = '#f2f2f2'; ctx.fillRect(8, 24, 34, 18); ctx.fillStyle = '#555'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(T.adTag, 25, 33.5)
-    }
     if (tutorOn && mode === 'play') {
       const p = ropeScreen(LV[0].solve[0][0]); if (p) { const el = $('tutor'); el.style.left = (p.x - 60) + 'px'; el.style.top = (p.y + 4) + 'px' }
     }
   }
 
-  // タイトルの後ろで、広告みたいに勝手に解いてみせる
-  const DEMO = [{ lv: 0, steps: [[1.4, 'A']] }, { lv: 6, steps: [[3.6, 'A']] }, { lv: 0, steps: [[1.4, 'B']] }, { lv: 3, steps: [[1.2, 'B'], [2.6, 'A']] }]
+  // タイトルの後ろで、勝手に解いてみせる（上級の面も混ぜる）
+  const DEMO = [{ lv: 0, steps: [[1.4, 'A']] }, { lv: 6, steps: [[3.6, 'A']] }, { lv: 12, steps: [[1.2, 'A'], [2.6, 'C']] }, { lv: 3, steps: [[1.2, 'B'], [2.6, 'A']] }, { lv: 13, steps: [[1.2, 'B'], [2.8, 'A']] }, { lv: 0, steps: [[1.4, 'B']] }]
   let demoI = 0
   function startDemo() { demo = DEMO[demoI % DEMO.length]; demoI++; lvIdx = demo.lv; world = E.create(LV[demo.lv], {}); E.prepare(world); demo.t0 = world.t; demo.k = 0; demo.end = 0; bg = null; trail.length = 0 }
   function demoTick() {
@@ -792,6 +851,8 @@
   cv.addEventListener('pointercancel', e => { if (ptr && ptr.id === e.pointerId) ptr = null })
   $('bStart').onclick = () => { click(); show('play'); load(best > 0 && best < LV.length ? best : (Q.has('lv') ? Number(Q.get('lv')) - 1 : 0)) }
   $('bStages').onclick = () => { click(); openStages() }
+  $('tabB').onclick = () => { click(); openStages(0) }
+  $('tabA').onclick = () => { click(); openStages(1) }
   $('bStBack').onclick = () => { click(); show('title') }
   $('bHow').onclick = () => { click(); show('how') }
   $('bHowClose').onclick = () => { click(); show('title') }

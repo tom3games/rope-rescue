@@ -16,10 +16,12 @@
 - snd/scream1-2.mp3: Female high-pitched scream SFX / WuxiaScrub
 - snd/cut1-3.mp3: Swishes Sound Pack / artisticdude
 - snd/thud1-2.mp3: Thwack Sounds / AntumDeluge
+- snd/boing1-2.mp3: 100 CC0 SFX / rubberduck（spring_03・spring_04）
+- snd/plank1-2.mp3: 75 CC0 breaking / falling / hit sfx / rubberduck（wood_breaking_01・03）
 
 ## 絵
 
-- 勇者・魔物・宝箱・岩・バケツ・爆弾・檻・ひも・壁・溶岩・とげは、このゲームのために Canvas で手描きした（画像生成は使っていない）
+- 勇者・魔物・宝箱・岩・バケツ・爆弾・檻・ひも・壁・溶岩・とげ・バネ・木の板は、このゲームのために Canvas で手描きした（画像生成は使っていない）
 
 ## フォント
 
